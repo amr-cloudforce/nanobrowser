@@ -233,6 +233,7 @@ const hasExecutedCode = message.actor === Actors.NAVIGATOR && (executedCode || h
 4. **Timing Assumptions**: Assumed synchronous behavior when code was asynchronous
 5. **Silent Failures**: No error handling or logging when extraction failed
 6. **Incomplete Implementation**: Only embedded code in success path, not failure/error paths
+7. **Incomplete Detection Logic**: Button detection only checked for success message text, ignored failure/error messages
 
 ## What Should Have Been Done
 
@@ -243,6 +244,7 @@ const hasExecutedCode = message.actor === Actors.NAVIGATOR && (executedCode || h
 5. **Better Error Handling**: Log failures, show fallbacks, make problems visible
 6. **Incremental Development**: Get basic version working first, then add complexity
 7. **Complete All Code Paths**: Embed code in success, failure, AND error messages
+8. **Complete All Detection Patterns**: Check for all message types (success, failure, error) in detection logic
 
 ## Time Wasted
 - **Estimated**: 4-5 hours of back-and-forth debugging (including the failure message issue)
@@ -250,6 +252,7 @@ const hasExecutedCode = message.actor === Actors.NAVIGATOR && (executedCode || h
 - **Main Blockers**: 
   1. Using refs instead of state (fundamental mistake)
   2. Only embedding code in success messages (incomplete implementation)
+  3. Button detection only checking success messages, ignoring failures (incomplete detection logic)
 
 ## Key Takeaways
 1. **If you need React to re-render when data changes, use `useState`. `useRef` is for values that don't affect rendering.**

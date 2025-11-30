@@ -60,7 +60,10 @@ export default function CodeFavoritesPanel({ currentUrl, isDarkMode = false, onE
     });
   };
 
-  const handleExecute = async (favorite: CodeFavorite) => {
+  const handleExecute = async (e: React.MouseEvent, favorite: CodeFavorite) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
     await codeFavoritesStorage.incrementUseCount(favorite.id);
     onExecuteFavorite(favorite.code);
     // Reload to update use count
@@ -73,7 +76,10 @@ export default function CodeFavoritesPanel({ currentUrl, isDarkMode = false, onE
     }
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (e: React.MouseEvent, id: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
     if (confirm('Are you sure you want to delete this favorite?')) {
       await codeFavoritesStorage.removeFavorite(id);
       if (currentUrl) {
@@ -132,14 +138,14 @@ export default function CodeFavoritesPanel({ currentUrl, isDarkMode = false, onE
               <div className="flex shrink-0 gap-1">
                 <button
                   type="button"
-                  onClick={() => handleExecute(favorite)}
+                  onClick={(e) => handleExecute(e, favorite)}
                   className={`rounded px-2 py-1 text-xs transition-colors ${isDarkMode ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-green-500 hover:bg-green-600 text-white'}`}
                   title="Execute code">
                   ▶️
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDelete(favorite.id)}
+                  onClick={(e) => handleDelete(e, favorite.id)}
                   className={`rounded px-2 py-1 text-xs transition-colors ${isDarkMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
                   title="Delete favorite">
                   🗑️

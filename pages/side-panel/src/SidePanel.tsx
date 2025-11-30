@@ -306,7 +306,12 @@ const SidePanel = () => {
               }
               break;
             case ExecutionState.ACT_OK:
-              skip = !isReplayingRef.current;
+              // Always show code execution messages so users can save them
+              const isCodeExecution = content?.includes('<nano_executed_code>') ||
+                                     content?.includes('Code executed') ||
+                                     content?.includes('Code execution failed') ||
+                                     content?.includes('Error executing code');
+              skip = isCodeExecution ? false : !isReplayingRef.current;
               break;
             case ExecutionState.ACT_FAIL:
               skip = false;

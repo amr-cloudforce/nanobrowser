@@ -65,6 +65,17 @@ function MessageBlock({
   
   const hasExecutedCode = message.actor === Actors.NAVIGATOR && (executedCode || hasCodeExecutedText);
   
+  // Debug logging for all Navigator messages
+  if (message.actor === Actors.NAVIGATOR) {
+    console.log('[MessageBlock] Navigator message check:', {
+      messageIndex,
+      hasExecutedCode,
+      hasCodeExecutedText,
+      hasExtractedCode: !!executedCode,
+      contentPreview: message.content.substring(0, 100),
+    });
+  }
+  
   // If we don't have extracted code but message has code execution text, try to extract from original content
   let codeToSave = executedCode;
   if (!codeToSave && hasCodeExecutedText) {
@@ -136,11 +147,12 @@ function MessageBlock({
           </div>
           {!isProgress && (
             <div className="flex items-center justify-end gap-2">
-              {hasExecutedCode && onSaveCode && (
+              {hasExecutedCode && (
                 <button
                   type="button"
                   onClick={handleSaveClick}
-                  className={`rounded px-2 py-0.5 text-xs transition-colors ${isDarkMode ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+                  disabled={!onSaveCode}
+                  className={`rounded px-2 py-0.5 text-xs transition-colors ${isDarkMode ? 'bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed'}`}
                   title={codeToSave || executedCode ? "Save code as favorite" : "No code found - Navigator may not have used execute_code action"}>
                   💾 Save
                 </button>
