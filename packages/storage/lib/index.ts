@@ -3,6 +3,8 @@ export * from './settings';
 export * from './chat';
 export * from './profile';
 export * from './prompt/favorites';
+export * from './code-favorites/favorites';
 
-// Re-export the favorites instance for direct use
+// Re-export the favorites instances for direct use
 export { default as favoritesStorage } from './prompt/favorites';
+export { default as codeFavoritesStorage } from './code-favorites/favorites';

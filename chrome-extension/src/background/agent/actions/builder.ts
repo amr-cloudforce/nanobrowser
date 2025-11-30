@@ -823,14 +823,15 @@ export class ActionBuilder {
             if (result.success) {
               const outputStr =
                 result.output !== undefined ? JSON.stringify(result.output) : 'Code executed successfully';
-              const msg = t('act_executeCode_ok', [outputStr]);
+              // Embed the executed code in the message using hidden tags
+              const msg = `${t('act_executeCode_ok', [outputStr])}<nano_executed_code>${codeString}</nano_executed_code>`;
               this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
               return new ActionResult({
                 extractedContent: msg,
                 includeInMemory: true,
               });
             } else {
-              const errorMsg = t('act_executeCode_failed', [result.error || 'Unknown error']);
+              const errorMsg = `${t('act_executeCode_failed', [result.error || 'Unknown error'])}<nano_executed_code>${codeString}</nano_executed_code>`;
               this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
               return new ActionResult({
                 error: errorMsg,
@@ -838,7 +839,7 @@ export class ActionBuilder {
               });
             }
           } catch (error) {
-            const errorMsg = t('act_executeCode_error', [error instanceof Error ? error.message : String(error)]);
+            const errorMsg = `${t('act_executeCode_error', [error instanceof Error ? error.message : String(error)])}<nano_executed_code>${codeString}</nano_executed_code>`;
             this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
             return new ActionResult({
               error: errorMsg,

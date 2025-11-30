@@ -1,21 +1,32 @@
 import type { Message } from '@extension/storage';
 import { ACTOR_PROFILES } from '../types/message';
 import { memo } from 'react';
+import { Actors } from '@extension/storage';
 
 interface MessageListProps {
   messages: Message[];
   isDarkMode?: boolean;
+  executedCodeMap?: Map<number, string>;
+  onSaveCode?: (messageIndex: number, code: string) => void;
 }
 
-export default memo(function MessageList({ messages, isDarkMode = false }: MessageListProps) {
+export default memo(function MessageList({
+  messages,
+  isDarkMode = false,
+  executedCodeMap,
+  onSaveCode,
+}: MessageListProps) {
   return (
     <div className="max-w-full space-y-4">
       {messages.map((message, index) => (
         <MessageBlock
           key={`${message.actor}-${message.timestamp}-${index}`}
           message={message}
+          messageIndex={index}
           isSameActor={index > 0 ? messages[index - 1].actor === message.actor : false}
           isDarkMode={isDarkMode}
+          executedCode={executedCodeMap?.get(index)}
+          onSaveCode={onSaveCode}
         />
       ))}
     </div>
@@ -24,17 +35,71 @@ export default memo(function MessageList({ messages, isDarkMode = false }: Messa
 
 interface MessageBlockProps {
   message: Message;
+  messageIndex: number;
   isSameActor: boolean;
   isDarkMode?: boolean;
+  executedCode?: string;
+  onSaveCode?: (messageIndex: number, code: string) => void;
 }
 
-function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlockProps) {
+function MessageBlock({
+  message,
+  messageIndex,
+  isSameActor,
+  isDarkMode = false,
+  executedCode,
+  onSaveCode,
+}: MessageBlockProps) {
   if (!message.actor) {
     console.error('No actor found');
     return <div />;
   }
   const actor = ACTOR_PROFILES[message.actor as keyof typeof ACTOR_PROFILES];
   const isProgress = message.content === 'Showing progress...';
+
+  // Check if this is a Navigator message with executed code
+  // Show button if we have extracted code OR if message contains code execution text (success or failure)
+  const hasCodeExecutedText = message.content.includes('Code executed') || 
+                             message.content.includes('Code execution failed') ||
+                             message.content.includes('Error executing code');
+  
+  const hasExecutedCode = message.actor === Actors.NAVIGATOR && (executedCode || hasCodeExecutedText);
+  
+  // If we don't have extracted code but message has code execution text, try to extract from original content
+  let codeToSave = executedCode;
+  if (!codeToSave && hasCodeExecutedText) {
+    // Try to extract code from the original message (before it was cleaned)
+    const codeMatch = message.content.match(/<nano_executed_code>([\s\S]*?)<\/nano_executed_code>/);
+    if (codeMatch) {
+      codeToSave = codeMatch[1];
+      console.log('[MessageBlock] ✅ Extracted code from message content:', codeToSave.substring(0, 100));
+    }
+  }
+  
+  // Debug: log Navigator messages with code execution
+  if (message.actor === Actors.NAVIGATOR && hasCodeExecutedText) {
+    console.log('[MessageBlock] Navigator message with code execution:', {
+      messageIndex,
+      hasExecutedCode: !!executedCode,
+      hasCodeToSave: !!codeToSave,
+      contentPreview: message.content.substring(0, 150),
+      hasCodeTags: message.content.includes('<nano_executed_code>'),
+    });
+  }
+
+  // Strip nano_executed_code tags from display
+  const displayContent = message.content.replace(/<nano_executed_code>[\s\S]*?<\/nano_executed_code>/g, '');
+
+  const handleSaveClick = () => {
+    if (codeToSave && onSaveCode) {
+      onSaveCode(messageIndex, codeToSave);
+    } else if (executedCode && onSaveCode) {
+      onSaveCode(messageIndex, executedCode);
+    } else {
+      // If no code found, show alert and try to prompt user
+      alert('No code found in this message. The Navigator may not have used execute_code action. Try asking explicitly: "use execute_code to..."');
+    }
+  };
 
   return (
     <div
@@ -66,12 +131,23 @@ function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlock
                 <div className="h-full animate-progress bg-blue-500" />
               </div>
             ) : (
-              message.content
+              displayContent
             )}
           </div>
           {!isProgress && (
-            <div className={`text-right text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-300'}`}>
-              {formatTimestamp(message.timestamp)}
+            <div className="flex items-center justify-end gap-2">
+              {hasExecutedCode && onSaveCode && (
+                <button
+                  type="button"
+                  onClick={handleSaveClick}
+                  className={`rounded px-2 py-0.5 text-xs transition-colors ${isDarkMode ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-blue-500 hover:bg-blue-600 text-white'}`}
+                  title={codeToSave || executedCode ? "Save code as favorite" : "No code found - Navigator may not have used execute_code action"}>
+                  💾 Save
+                </button>
+              )}
+              <div className={`text-xs ${isDarkMode ? 'text-gray-500' : 'text-gray-300'}`}>
+                {formatTimestamp(message.timestamp)}
+              </div>
             </div>
           )}
         </div>

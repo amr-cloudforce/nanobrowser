@@ -6,11 +6,13 @@ import { PiPlusBold } from 'react-icons/pi';
 import { GrHistory } from 'react-icons/gr';
 import { type Message, Actors, chatHistoryStore, agentModelStore, generalSettingsStore } from '@extension/storage';
 import favoritesStorage, { type FavoritePrompt } from '@extension/storage/lib/prompt/favorites';
+import { codeFavoritesStorage, type CodeFavorite } from '@extension/storage';
 import { t } from '@extension/i18n';
 import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
 import ChatHistoryList from './components/ChatHistoryList';
 import BookmarkList from './components/BookmarkList';
+import CodeFavoritesPanel from './components/CodeFavoritesPanel';
 import { EventType, type AgentEvent, ExecutionState } from './types/event';
 import './SidePanel.css';
 
@@ -38,6 +40,8 @@ const SidePanel = () => {
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
   const [replayEnabled, setReplayEnabled] = useState(false);
+  const [executedCodeMap, setExecutedCodeMap] = useState<Map<number, string>>(new Map());
+  const [currentUrl, setCurrentUrl] = useState<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const isReplayingRef = useRef<boolean>(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
@@ -86,6 +90,36 @@ const SidePanel = () => {
     }
   }, []);
 
+  // Get current tab URL
+  useEffect(() => {
+    const updateCurrentUrl = async () => {
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const tab = tabs[0];
+        if (tab?.url) {
+          setCurrentUrl(tab.url);
+        }
+      } catch (error) {
+        console.error('Failed to get current URL:', error);
+      }
+    };
+
+    updateCurrentUrl();
+
+    // Listen for tab updates
+    const handleTabUpdate = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => {
+      if (changeInfo.url && tab.active) {
+        setCurrentUrl(tab.url || null);
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(handleTabUpdate);
+
+    return () => {
+      chrome.tabs.onUpdated.removeListener(handleTabUpdate);
+    };
+  }, []);
+
   // Check model configuration on mount
   useEffect(() => {
     checkModelConfiguration();
@@ -129,9 +163,49 @@ const SidePanel = () => {
     // Don't save progress messages
     const isProgressMessage = newMessage.content === progressMessage;
 
+    // Extract code from message if it contains nano_executed_code tags
+    let extractedCode: string | undefined;
+    let cleanedContent = newMessage.content;
+    const codeMatch = newMessage.content.match(/<nano_executed_code>([\s\S]*?)<\/nano_executed_code>/);
+    if (codeMatch) {
+      extractedCode = codeMatch[1];
+      cleanedContent = newMessage.content.replace(/<nano_executed_code>[\s\S]*?<\/nano_executed_code>/g, '');
+      console.log('[SidePanel] ✅ Extracted code from Navigator message:', {
+        actor: newMessage.actor,
+        codeLength: extractedCode.length,
+        codePreview: extractedCode.substring(0, 100),
+        originalContent: newMessage.content.substring(0, 200),
+      });
+    } else if (newMessage.actor === Actors.NAVIGATOR) {
+      // Log Navigator messages that don't have code tags
+      const hasCodeExecution = newMessage.content.includes('Code executed') || 
+                               newMessage.content.includes('Code execution failed') ||
+                               newMessage.content.includes('Error executing code');
+      console.log('[SidePanel] ⚠️ Navigator message without code tags:', {
+        content: newMessage.content.substring(0, 200),
+        hasCodeExecution,
+        hasCodeExecuted: newMessage.content.includes('Code executed'),
+        hasCodeFailed: newMessage.content.includes('Code execution failed'),
+      });
+    }
+
     setMessages(prev => {
       const filteredMessages = prev.filter((msg, idx) => !(msg.content === progressMessage && idx === prev.length - 1));
-      return [...filteredMessages, newMessage];
+      const newMessages = [...filteredMessages, { ...newMessage, content: cleanedContent }];
+      const messageIndex = newMessages.length - 1;
+      
+      // Store extracted code with the message index synchronously
+      if (extractedCode && newMessage.actor === Actors.NAVIGATOR) {
+        // Update the code map immediately with the correct index
+        setExecutedCodeMap(map => {
+          const newMap = new Map(map);
+          newMap.set(messageIndex, extractedCode!);
+          console.log('[SidePanel] Set executed code for message index:', messageIndex, 'Code preview:', extractedCode!.substring(0, 50));
+          return newMap;
+        });
+      }
+      
+      return newMessages;
     });
 
     // Use provided sessionId if available, otherwise fall back to sessionIdRef.current
@@ -142,7 +216,7 @@ const SidePanel = () => {
     // Save message to storage if we have a session and it's not a progress message
     if (effectiveSessionId && !isProgressMessage) {
       chatHistoryStore
-        .addMessage(effectiveSessionId, newMessage)
+        .addMessage(effectiveSessionId, { ...newMessage, content: cleanedContent })
         .catch(err => console.error('Failed to save message to history:', err));
     }
   }, []);
@@ -799,6 +873,112 @@ const SidePanel = () => {
     }
   };
 
+  const handleSaveCode = async (messageIndex: number, code: string) => {
+    try {
+      // Show code preview and get name from user
+      const codePreview = code.substring(0, 200) + (code.length > 200 ? '...' : '');
+      const name = prompt(`Save code as favorite:\n\n${codePreview}\n\nEnter a name for this code:`, 'My Code');
+      
+      if (!name || !name.trim()) {
+        return; // User cancelled or entered empty name
+      }
+
+      // Get current URL for pattern matching
+      const urlPattern = currentUrl || window.location.href;
+      
+      // Save to code favorites
+      await codeFavoritesStorage.addFavorite(name.trim(), code, urlPattern);
+      
+      // Show confirmation
+      appendMessage({
+        actor: Actors.SYSTEM,
+        content: `Code saved as favorite: ${name.trim()}`,
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      console.error('Failed to save code favorite:', error);
+      appendMessage({
+        actor: Actors.SYSTEM,
+        content: `Failed to save code: ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: Date.now(),
+      });
+    }
+  };
+
+  const handleExecuteFavorite = async (code: string) => {
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tabId = tabs[0]?.id;
+      if (!tabId) {
+        throw new Error('No active tab found');
+      }
+
+      // Execute code directly in the page
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: (codeStr: string) => {
+          try {
+            const script = document.createElement('script');
+            script.textContent = `
+              (function() {
+                try {
+                  const codeFunc = ${codeStr};
+                  const result = codeFunc();
+                  window.__nanobrowser_execute_code_result__ = result;
+                } catch (error) {
+                  window.__nanobrowser_execute_code_result__ = {
+                    success: false,
+                    error: error instanceof Error ? error.message : String(error)
+                  };
+                }
+              })();
+            `;
+            document.documentElement.appendChild(script);
+            script.remove();
+            
+            const result = (window as any).__nanobrowser_execute_code_result__;
+            delete (window as any).__nanobrowser_execute_code_result__;
+            
+            if (typeof result === 'object' && result !== null && 'success' in result) {
+              return result;
+            }
+            return { success: true, output: result };
+          } catch (error) {
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
+        args: [code],
+      });
+
+      const result = results[0]?.result;
+      if (result?.success) {
+        const outputStr = result.output !== undefined ? JSON.stringify(result.output) : 'Code executed successfully';
+        appendMessage({
+          actor: Actors.SYSTEM,
+          content: `Code executed. Output: ${outputStr}`,
+          timestamp: Date.now(),
+        });
+      } else {
+        appendMessage({
+          actor: Actors.SYSTEM,
+          content: `Code execution failed: ${result?.error || 'Unknown error'}`,
+          timestamp: Date.now(),
+        });
+      }
+    } catch (error) {
+      console.error('Failed to execute favorite code:', error);
+      appendMessage({
+        actor: Actors.SYSTEM,
+        content: `Failed to execute code: ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: Date.now(),
+      });
+    }
+  };
+
   // Load favorite prompts from storage
   useEffect(() => {
     const loadFavorites = async () => {
@@ -1143,7 +1323,12 @@ const SidePanel = () => {
                         onReplay={handleReplay}
                       />
                     </div>
-                    <div className="flex-1 overflow-y-auto">
+                    <div className="flex-1 overflow-y-auto p-2">
+                      <CodeFavoritesPanel
+                        currentUrl={currentUrl}
+                        isDarkMode={isDarkMode}
+                        onExecuteFavorite={handleExecuteFavorite}
+                      />
                       <BookmarkList
                         bookmarks={favoritePrompts}
                         onBookmarkSelect={handleBookmarkSelect}
@@ -1158,7 +1343,17 @@ const SidePanel = () => {
                 {messages.length > 0 && (
                   <div
                     className={`scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth p-2 ${isDarkMode ? 'bg-slate-900/80' : ''}`}>
-                    <MessageList messages={messages} isDarkMode={isDarkMode} />
+                    <CodeFavoritesPanel
+                      currentUrl={currentUrl}
+                      isDarkMode={isDarkMode}
+                      onExecuteFavorite={handleExecuteFavorite}
+                    />
+                    <MessageList
+                      messages={messages}
+                      isDarkMode={isDarkMode}
+                      executedCodeMap={executedCodeMap}
+                      onSaveCode={handleSaveCode}
+                    />
                     <div ref={messagesEndRef} />
                   </div>
                 )}
