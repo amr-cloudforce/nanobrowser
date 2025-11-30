@@ -752,7 +752,7 @@ export class ActionBuilder {
           try {
             // Log the code execution attempt
             logger.info(`[execute_code] Starting code execution in tab ${tabId}`);
-            logger.info(`[execute_code] Full code: ${input.code}`);
+            logger.info(`[execute_code] Code preview: ${input.code.substring(0, 200)}${input.code.length > 200 ? '...' : ''}`);
             
             // Validate and prepare the code string
             const codeString = input.code.trim();
@@ -765,7 +765,7 @@ export class ActionBuilder {
               func: (codeStr: string) => {
                 try {
                   // Log in page context
-                  console.log('[Nanobrowser execute_code] Executing code:', codeStr);
+                  console.log('[Nanobrowser execute_code] Executing code:', codeStr.substring(0, 200));
                   
                   // Create a script element to execute the code (CSP-safe for most sites)
                   const script = document.createElement('script');
