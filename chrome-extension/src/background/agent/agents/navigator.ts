@@ -442,6 +442,15 @@ export class NavigatorAgent extends BaseAgent<z.ZodType, NavigatorResult> {
         );
         // unexpected error, emit event
         this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMessage);
+        
+        // Refresh state after error to ensure next action has current DOM state
+        // This is especially important for form filling where DOM might change after errors
+        try {
+          await browserContext.getState(this.context.options.useVision, true);
+        } catch (stateError) {
+          logger.warning('Failed to refresh state after error:', stateError);
+        }
+        
         errCount++;
         if (errCount > 3) {
           throw new Error('Too many errors in actions');

@@ -22,12 +22,14 @@ import {
   nextPageActionSchema,
   scrollToTopActionSchema,
   scrollToBottomActionSchema,
+  executeCodeActionSchema,
 } from './schemas';
 import { z } from 'zod';
 import { createLogger } from '@src/background/log';
 import { ExecutionState, Actors } from '../event/types';
 import type { BaseChatModel } from '@langchain/core/language_models/chat_models';
 import { wrapUntrustedContent } from '../messages/utils';
+import type { GeneralSettingsConfig } from '@extension/storage';
 
 const logger = createLogger('Action');
 
@@ -143,10 +145,12 @@ export function buildDynamicActionSchema(actions: Action[]): z.ZodType {
 export class ActionBuilder {
   private readonly context: AgentContext;
   private readonly extractorLLM: BaseChatModel;
+  private readonly generalSettings?: GeneralSettingsConfig;
 
-  constructor(context: AgentContext, extractorLLM: BaseChatModel) {
+  constructor(context: AgentContext, extractorLLM: BaseChatModel, generalSettings?: GeneralSettingsConfig) {
     this.context = context;
     this.extractorLLM = extractorLLM;
+    this.generalSettings = generalSettings;
   }
 
   buildDefaultActions() {
@@ -287,17 +291,39 @@ export class ActionBuilder {
         this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
 
         const page = await this.context.browserContext.getCurrentPage();
-        const state = await page.getState();
-
-        const elementNode = state?.selectorMap.get(input.index);
+        
+        // Get fresh state before attempting input
+        let state = await page.getState(this.context.options.useVision, true);
+        let elementNode = state?.selectorMap.get(input.index);
+        
+        // If element not found, refresh state and try once more
+        if (!elementNode) {
+          try {
+            logger.warning(`Element ${input.index} not found, refreshing state and retrying...`);
+          } catch (logError) {
+            // Fallback if logger has issues
+            console.warn('[Action] Element not found, refreshing state and retrying...');
+          }
+          // Wait a bit for DOM to stabilize
+          await new Promise(resolve => setTimeout(resolve, 500));
+          state = await page.getState(this.context.options.useVision, true);
+          elementNode = state?.selectorMap.get(input.index);
+        }
+        
         if (!elementNode) {
           throw new Error(t('act_errors_elementNotExist', [input.index.toString()]));
         }
 
-        await page.inputTextElementNode(this.context.options.useVision, elementNode, input.text);
-        const msg = t('act_inputText_ok', [input.text, input.index.toString()]);
-        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
-        return new ActionResult({ extractedContent: msg, includeInMemory: true });
+        try {
+          await page.inputTextElementNode(this.context.options.useVision, elementNode, input.text);
+          const msg = t('act_inputText_ok', [input.text, input.index.toString()]);
+          this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+          return new ActionResult({ extractedContent: msg, includeInMemory: true });
+        } catch (error) {
+          // If input fails, refresh state for next action
+          await page.getState(this.context.options.useVision, true);
+          throw error;
+        }
       },
       inputTextActionSchema,
       true,
@@ -706,6 +732,124 @@ export class ActionBuilder {
       true,
     );
     actions.push(selectDropdownOption);
+
+    // Code execution action (only if enabled in settings)
+    if (this.generalSettings?.allowCodeGeneration) {
+      const executeCode = new Action(
+        async (input: z.infer<typeof executeCodeActionSchema.schema>) => {
+          const intent = input.intent || t('act_executeCode_start');
+          this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
+
+          const page = await this.context.browserContext.getCurrentPage();
+          const tabId = page.tabId;
+
+          if (!tabId) {
+            const errorMsg = t('act_executeCode_noTabId');
+            this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
+            return new ActionResult({ error: errorMsg, includeInMemory: true });
+          }
+
+          try {
+            // Log the code execution attempt
+            logger.info(`[execute_code] Starting code execution in tab ${tabId}`);
+            logger.info(`[execute_code] Full code: ${input.code}`);
+            
+            // Validate and prepare the code string
+            const codeString = input.code.trim();
+            
+            // Execute the code in the page context using a wrapper that doesn't require eval
+            // We inject the code as a script that creates and executes the function
+            const results = await chrome.scripting.executeScript({
+              target: { tabId },
+              world: 'MAIN', // Execute in main world (page context), not isolated world
+              func: (codeStr: string) => {
+                try {
+                  // Log in page context
+                  console.log('[Nanobrowser execute_code] Executing code:', codeStr);
+                  
+                  // Create a script element to execute the code (CSP-safe for most sites)
+                  const script = document.createElement('script');
+                  script.textContent = `
+                    (function() {
+                      try {
+                        const codeFunc = ${codeStr};
+                        const result = codeFunc();
+                        window.__nanobrowser_execute_code_result__ = result;
+                      } catch (error) {
+                        window.__nanobrowser_execute_code_result__ = {
+                          success: false,
+                          error: error instanceof Error ? error.message : String(error)
+                        };
+                      }
+                    })();
+                  `;
+                  document.documentElement.appendChild(script);
+                  script.remove();
+                  
+                  // Get the result
+                  const result = (window as any).__nanobrowser_execute_code_result__;
+                  delete (window as any).__nanobrowser_execute_code_result__;
+                  
+                  // Log result in page context
+                  console.log('[Nanobrowser execute_code] Execution result:', JSON.stringify(result));
+                  
+                  // Ensure result is an object with success property
+                  if (typeof result === 'object' && result !== null && 'success' in result) {
+                    return result;
+                  }
+                  // If code returns a value but not in expected format, wrap it
+                  return { success: true, output: result };
+                } catch (error) {
+                  console.error('[Nanobrowser execute_code] Execution error:', error);
+                  return {
+                    success: false,
+                    error: error instanceof Error ? error.message : String(error),
+                  };
+                }
+              },
+              args: [codeString],
+            });
+            
+            const executionResult = results[0]?.result;
+            logger.info(`[execute_code] Execution completed. Success: ${executionResult?.success}, Output: ${JSON.stringify(executionResult?.output)}, Error: ${executionResult?.error || 'none'}`);
+
+            const result = results[0]?.result;
+            if (!result) {
+              const errorMsg = t('act_executeCode_noResult');
+              this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
+              return new ActionResult({ error: errorMsg, includeInMemory: true });
+            }
+
+            if (result.success) {
+              const outputStr =
+                result.output !== undefined ? JSON.stringify(result.output) : 'Code executed successfully';
+              const msg = t('act_executeCode_ok', [outputStr]);
+              this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+              return new ActionResult({
+                extractedContent: msg,
+                includeInMemory: true,
+              });
+            } else {
+              const errorMsg = t('act_executeCode_failed', [result.error || 'Unknown error']);
+              this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
+              return new ActionResult({
+                error: errorMsg,
+                includeInMemory: true,
+              });
+            }
+          } catch (error) {
+            const errorMsg = t('act_executeCode_error', [error instanceof Error ? error.message : String(error)]);
+            this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
+            return new ActionResult({
+              error: errorMsg,
+              includeInMemory: true,
+            });
+          }
+        },
+        executeCodeActionSchema,
+      );
+      actions.push(executeCode);
+    }
 
     return actions;
   }

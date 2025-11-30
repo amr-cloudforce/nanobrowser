@@ -4,9 +4,18 @@
 
 DIST_FOLDER="$(pwd)/dist"
 
-# Fix pnpm cache directory issue
-export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+# Fix pnpm cache directory issue - force use of actual home directory
+# Clear any VSCode container paths that might be set
+unset PNPM_HOME
+export PNPM_HOME="$HOME/.local/share/pnpm"
+export PNPM_STORE_DIR="$HOME/.local/share/pnpm/store"
+
+# Create the directory structure
 mkdir -p "$PNPM_HOME/.tools/pnpm" 2>/dev/null || true
+mkdir -p "$PNPM_STORE_DIR" 2>/dev/null || true
+
+# Set pnpm config to use the correct store directory
+pnpm config set store-dir "$PNPM_STORE_DIR" 2>/dev/null || true
 
 # Check Node version and use nvm if available
 if [ -f .nvmrc ]; then

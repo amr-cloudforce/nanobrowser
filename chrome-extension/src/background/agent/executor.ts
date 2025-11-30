@@ -65,10 +65,10 @@ export class Executor {
 
     this.generalSettings = extraArgs?.generalSettings;
     this.tasks.push(task);
-    this.navigatorPrompt = new NavigatorPrompt(context.options.maxActionsPerStep);
+    this.navigatorPrompt = new NavigatorPrompt(context.options.maxActionsPerStep, this.generalSettings);
     this.plannerPrompt = new PlannerPrompt();
 
-    const actionBuilder = new ActionBuilder(context, extractorLLM);
+    const actionBuilder = new ActionBuilder(context, extractorLLM, this.generalSettings);
     const navigatorActionRegistry = new NavigatorActionRegistry(actionBuilder.buildDefaultActions());
 
     // Initialize agents with their respective prompts

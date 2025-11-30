@@ -213,3 +213,17 @@ export const waitActionSchema: ActionSchema = {
     seconds: z.number().int().default(3).describe('amount of seconds'),
   }),
 };
+
+export const executeCodeActionSchema: ActionSchema = {
+  name: 'execute_code',
+  description:
+    'Generate and execute JavaScript code directly in the page context. Use this for complex DOM manipulations, form interactions, or when standard actions are insufficient. The code runs in the page context and has full access to the DOM and page JavaScript. Return a result object with success status and any output.',
+  schema: z.object({
+    intent: z.string().default('').describe('purpose of this action'),
+    code: z
+      .string()
+      .describe(
+        'JavaScript code to execute in the page context. Must be valid JavaScript that returns a result object with {success: boolean, output?: any, error?: string}',
+      ),
+  }),
+};

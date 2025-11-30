@@ -262,6 +262,12 @@
   "options_general_replayHistoricalTasks_desc": {
     "message": "Enable storing and replaying of agent step history (experimental, may have issues)"
   },
+  "options_general_allowCodeGeneration": {
+    "message": "Allow Code Generation"
+  },
+  "options_general_allowCodeGeneration_desc": {
+    "message": "Allow AI to generate and execute JavaScript code on web pages for advanced manipulation"
+  },
 
   "options_models_providers_header": {
     "message": "LLM Providers"
@@ -967,5 +973,41 @@
         "example": "Option not found"
       }
     }
+  },
+  "act_executeCode_start": {
+    "message": "Executing JavaScript code in page context"
+  },
+  "act_executeCode_ok": {
+    "message": "Code executed successfully. Output: $OUTPUT$",
+    "placeholders": {
+      "output": {
+        "content": "$1",
+        "example": "{\"success\": true}"
+      }
+    }
+  },
+  "act_executeCode_failed": {
+    "message": "Code execution failed: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "ReferenceError: element is not defined"
+      }
+    }
+  },
+  "act_executeCode_error": {
+    "message": "Error executing code: $ERROR$",
+    "placeholders": {
+      "error": {
+        "content": "$1",
+        "example": "Failed to inject script"
+      }
+    }
+  },
+  "act_executeCode_noTabId": {
+    "message": "Cannot execute code: No tab ID available"
+  },
+  "act_executeCode_noResult": {
+    "message": "Code execution returned no result"
   }
 }

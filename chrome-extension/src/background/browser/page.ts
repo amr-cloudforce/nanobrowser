@@ -1158,7 +1158,13 @@ export default class Page {
         });
       } catch (e) {
         // Element may have become detached, try to re-locate it
-        logger.warn(`Element became detached, attempting to re-locate: ${elementNode.getDescription()}`);
+        // Use try-catch around logger to handle minification issues
+        try {
+          logger.warning(`Element became detached, attempting to re-locate: ${elementNode.getDescription()}`);
+        } catch (logError) {
+          // Fallback if logger has issues (minification edge case)
+          console.warn('[Page] Element became detached, attempting to re-locate:', elementNode.getDescription());
+        }
         const relocatedElement = await this.locateElement(elementNode);
         if (!relocatedElement) {
           throw new Error(`Element: ${elementNode.getDescription()} became detached and could not be re-located`);
@@ -1188,35 +1194,72 @@ export default class Page {
 
       // Choose appropriate input method based on element properties
       if ((isContentEditable || tagName === 'input') && !isReadOnly && !isDisabled) {
-        // Clear content and set value directly
+        // For form inputs, prefer direct value setting over typing to avoid detachment issues
+        // Typing can cause elements to become detached if the page has event handlers
         try {
-          await element.evaluate(el => {
+          // Clear content and set value directly
+          await element.evaluate((el, value) => {
             if (el instanceof HTMLElement) {
               el.textContent = '';
             }
             if ('value' in el) {
               (el as HTMLInputElement).value = '';
             }
-            // Dispatch events
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-          });
-
-          // Type the text with a small delay between keypresses
-          await element.type(text, { delay: 50 });
-        } catch (e) {
-          // If typing fails due to detachment, try direct value setting as fallback
-          logger.warn(`Typing failed, using direct value setting: ${e instanceof Error ? e.message : String(e)}`);
-          await element.evaluate((el, value) => {
+            // Set the value
             if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
               el.value = value;
             } else if (el instanceof HTMLElement && el.isContentEditable) {
               el.textContent = value;
             }
-            // Dispatch events
+            // Dispatch events to trigger any handlers
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('blur', { bubbles: true }));
+            // Also trigger focus if needed
+            if (el instanceof HTMLElement) {
+              el.focus();
+              el.dispatchEvent(new Event('focus', { bubbles: true }));
+            }
           }, text);
+        } catch (e) {
+          // If direct setting fails, try typing as fallback
+          // Use try-catch around logger to handle minification issues
+          try {
+            logger.warning(`Direct value setting failed, trying typing: ${e instanceof Error ? e.message : String(e)}`);
+          } catch {
+            // Fallback if logger has issues (minification edge case)
+            console.warn('[Page] Direct value setting failed, trying typing');
+          }
+          
+          // Try to re-locate element if it became detached
+          let targetElement = element;
+          try {
+            await targetElement.evaluate(() => {});
+          } catch {
+            // Element is detached, try to re-locate
+            const relocatedElement = await this.locateElement(elementNode);
+            if (relocatedElement) {
+              targetElement = relocatedElement;
+            } else {
+              throw new Error(`Element: ${elementNode.getDescription()} became detached and could not be re-located`);
+            }
+          }
+          
+          // Try typing as fallback
+          try {
+            await targetElement.type(text, { delay: 50 });
+          } catch (typeError) {
+            // If typing also fails, use direct setting again
+            await targetElement.evaluate((el, value) => {
+              if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+                el.value = value;
+              } else if (el instanceof HTMLElement && el.isContentEditable) {
+                el.textContent = value;
+              }
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            }, text);
+          }
         }
       } else {
         // Use direct value setting for other types of elements
